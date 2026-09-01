@@ -1,108 +1,70 @@
-# Ritual Predict
+# DriftGuard
 
-A self-resolving binary prediction market on [Ritual Chain](https://docs.ritualfoundation.org).
+DriftGuard is a self-resolving prediction market for relative movement. Instead of
+asking a plain yes/no threshold question, each market starts from a fixed reference
+value and a tolerance measured in basis points. The final reading is classified as
+`DownDrift`, `Stable`, or `UpDrift`.
 
-Create a market like _"Will ETH/USD be at least $4,000 when this market resolves?"_, stake native
-RITUAL on YES or NO, and watch it settle itself. When the betting window closes, **nobody presses a
-resolve button and no backend cron job runs**. The Ritual Scheduler wakes the contract at a block
-fixed when the market was created; the contract calls the HTTP precompile to read the configured
-oracle URL, extracts one number with the jq precompile, compares it to the target, and settles.
-Winners then pull their proportional share of the pool.
+Ritual's Scheduler books three resolution attempts when the market is created. Each
+attempt performs one HTTP precompile call (`0x0801`) and then a synchronous jq
+extraction (`0x0803`). A successful read calculates:
 
----
-
-## Architecture
-
-```
-                 createMarket()                    ┌──────────────────────────┐
-   user  ─────────────────────────────────────────▶│  RitualPredict.sol       │
-   user  ─────────── bet(id, YES|NO) ─────────────▶│                          │
-                                                   │  markets, pools, stakes  │
-                                     schedule() ◀──┤                          │
-                                                   └──────────────────────────┘
-    ┌─────────────────────────────┐                     ▲              │
-    │ Scheduler  0x56e7…D58B      │  onScheduledResolve │              │ deposit()
-    │ system contract             │─────────────────────┘              ▼
-    │ fires at resolveBlock,      │                        ┌────────────────────────┐
-    │ 3 attempts, 200 blocks apart│                        │ RitualWallet 0x532F…   │
-    └─────────────────────────────┘                        │ prepaid execution fees │
-                                                           └────────────────────────┘
-                        inside that one scheduled transaction:
-
-   TEEServiceRegistry 0x9644…  ──pickServiceByCapability(HTTP_CALL)──▶  executor address
-   HTTP precompile    0x0801   ──GET oracleUrl (in a TEE)───────────▶  demo oracle
-   jq  precompile     0x0803   ──jsonPath, outputType=uint256───────▶  observed value
-                                          │
-                                          ▼
-                        observed ⋈ target  →  Resolved(YES|NO)
-                        read failed 3×     →  Invalid (everyone refunds)
+```text
+driftBps = (observed - referenceValue) * 10000 / referenceValue
 ```
 
----
+If the drift is below `-toleranceBps`, `DownDrift` wins. If it is above
+`+toleranceBps`, `UpDrift` wins. Everything inside the tolerance window resolves as
+`Stable`.
 
-### Design decisions worth knowing
+## Resolution Flow
 
-**Deadlines are block numbers, not timestamps.** The Scheduler fires at a _block_, so betting also
-closes at a _block_. That way "betting is closed" and "the Scheduler woke us" can never disagree,
-whatever the chain's block time does. `createMarket` takes human durations in seconds and converts
-them using the `blockTimeMs` fixed at deployment. Nothing on-chain reads `block.timestamp`.
+```text
+createMarket
+   └─ Scheduler: 3 attempts, 180 blocks apart
+          └─ pick HTTP executor -> fetch dataUrl -> jq jsonPath -> classify drift
 
-**On Ritual Chain, `block.timestamp` is Unix milliseconds** (≈`1.786e12`), not seconds — verified
-against the live chain, not assumed. That is a good reason to avoid it entirely, which this contract
-does. Measured block time was ≈195 ms when this was written; run
-`npx hardhat run scripts/block-time.ts` to check it for yourself.
+negative drift past tolerance ───► DownDrift
+inside tolerance window ─────────► Stable
+positive drift past tolerance ───► UpDrift
+all attempts fail ───────────────► Invalid / refunds
+winning side empty ──────────────► Invalid / refunds
+```
 
-**A failed oracle read is never a NO.** `onScheduledResolve` treats a precompile failure, a non-200
-response, an undecodable envelope, an executor error message, and an unparseable body all as
-_failures_, not as a negative outcome. The response decode happens through an external `try`, so
-malformed bytes surface as a caught failure instead of reverting the execution and rolling back the
-attempt counter.
+## Behavior
 
-**Retries are the Scheduler's own mechanism.** `createMarket` books `numCalls = 3` executions
-`frequency = 200` blocks apart in a single `schedule()` call. Attempt 1 lands at `resolveBlock`; if
-it succeeds, the contract `cancel()`s the remainder; if all three fail, the market becomes `Invalid`
-and every stake is refundable. Each attempt re-rolls the TEE executor seed, so one unhealthy
-executor cannot sink a market. The callback is idempotent, so a leftover execution is harmless.
+- `referenceValue` must be non-zero.
+- `toleranceBps` is capped at 5,000 bps.
+- Failed HTTP and jq reads spend retry budget instead of becoming an outcome.
+- A successful attempt cancels the remaining scheduled executions.
+- Payouts are pull-based and proportional across the three pools.
+- Invalid markets refund all original stakes.
+- No executor is hardcoded; the contract asks `TEEServiceRegistry` at resolution time.
 
-**No executor is hardcoded.** The contract calls
-`TEEServiceRegistry.pickServiceByCapability(HTTP_CALL, true, seed, 8)` at resolution time.
-
-**Payouts are pull-based and loop-free.** `claimWinnings` computes
-`stake × totalPool ÷ winningPool` for the caller only. Integer division leaves sub-wei dust in the
-contract; that is deliberate and negligible.
-
-**Empty winning side → refundable.** Pari-mutuel has no denominator when nobody backed the winning
-answer, so the market records the outcome and observed value, then becomes `Invalid` so everyone
-takes their stake back.
-
-**Resolution parameters are immutable.** `target`, `comparator`, `oracleUrl`, `jsonPath`, and
-`resolveBlock` have no setter. The `ResolutionRuleSet` event records them at creation.
-
----
-
-## Prerequisites
-
-- Node.js 20+ and `pnpm`
-- A wallet with testnet RITUAL from <https://faucet.ritualfoundation.org>
-
-## Setup
+## Verify Locally
 
 ```bash
 cd hardhat
 pnpm install
-cp .env.example .env
+pnpm exec hardhat build
+pnpm exec tsc --noEmit
+pnpm exec hardhat test solidity
 ```
 
----
+## Files
 
-## Scope
+| Path | Purpose |
+|---|---|
+| `hardhat/contracts/RitualPredict.sol` | Drift-based market contract |
+| `hardhat/contracts/DriftGuard.t.sol` | Solidity tests with local Ritual mocks |
+| `hardhat/contracts/ritual/RitualChain.sol` | Ritual system addresses and interfaces |
+| `DRIFT_SPEC.md` | Settlement and accounting rules |
+| `LOCAL_RUN.md` | Build and debugging record |
 
-Intentionally not included: an AMM, an order book, an order-matching engine, governance, a separate
-ERC-20, a centralized resolver, or an upgrade proxy. Staking uses the chain's native asset and the
-betting model is plain pari-mutuel: two running totals and one mapping per side.
+## Deployment Status
 
-## Reference
+This fork intentionally has no frontend and no GitHub Pages site. The account folder
+contained a GitHub token but no Ritual deployer private key, so the work was verified
+locally and no contract address or transaction hash is claimed.
 
-- Ritual Chain docs — <https://docs.ritualfoundation.org>
-- dApp skills — <https://github.com/ritual-foundation/ritual-dapp-skills>
-- Explorer — <https://explorer.ritualfoundation.org> · Faucet — <https://faucet.ritualfoundation.org>
+Official workshop parent: <https://github.com/cozfuttu/ritual-chain-workshop-2>.

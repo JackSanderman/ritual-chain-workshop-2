@@ -1,41 +1,24 @@
-# Ritual Predict — contracts
+# DriftGuard Hardhat Package
 
-The `RitualPredict` market contract, its tests, and the deployment scripts.
-Full architecture and the workshop runbook live in [../README.md](../README.md).
-
-## Layout
-
-```
-contracts/
-  RitualPredict.sol          the market: creation, betting, autonomous resolution, payouts
-  RitualPredict.t.sol        Solidity unit tests
-  ritual/RitualChain.sol     canonical Ritual addresses + system contract interfaces
-  mocks/RitualMocks.sol      test-only stand-ins for the precompiles and system contracts
-test/
-  RitualPredict.e2e.ts       end-to-end walkthroughs of the workshop flow
-scripts/
-  block-time.ts              measure the chain's current block time
-  deploy.ts                  deploy + prepay execution fees
-  fund.ts                    top up the prepaid execution balance
-  status.ts                  live state of every market
-  create-demo-market.ts      create the preset market from the CLI
-  export-abi.ts              copy the compiled ABI into the frontend
-```
+This package contains the Solidity market, local mocks, and CLI scripts for a
+three-outcome drift market on Ritual Chain.
 
 ## Commands
 
 ```bash
-cp .env.example .env                            # RITUAL_PRIVATE_KEY, funded from the faucet
-
-npx hardhat test                                # 33 Solidity + 2 TypeScript tests
-npx hardhat test solidity                       # Solidity only
-npx hardhat build                               # compile
-
-npx hardhat run scripts/block-time.ts           # measure block time
-npx hardhat run scripts/deploy.ts               # deploy to Ritual Chain
-PREDICT_ADDRESS=0x... npx hardhat run scripts/status.ts
-PREDICT_ADDRESS=0x... npx hardhat run scripts/fund.ts
+pnpm install
+pnpm exec hardhat build
+pnpm exec tsc --noEmit
+pnpm exec hardhat test solidity
 ```
 
-Tests run entirely against mocks — `vm.etch` puts the mock runtime code at the canonical Ritual
-addresses — so no network access or funded account is needed.
+Solidity tests run entirely against local mocks. `vm.etch` places mocks at the canonical
+Ritual Scheduler, RitualWallet, registry, HTTP, and jq addresses, so the suite does not
+need live funds or a deployer key.
+
+## Market Parameters
+
+`NewMarket` contains a question, public JSON URL, jq path, reference value, tolerance in
+basis points, betting duration, and resolution delay. The contract schedules three
+resolution attempts and treats oracle failures as retryable failures, not as a market
+answer.
