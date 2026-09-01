@@ -1,5 +1,5 @@
 /**
- * Deploy RitualPredict to Ritual Chain and prepay its execution fees.
+ * Deploy DriftGuard to Ritual Chain and prepay its scheduled read fees.
  *
  *   npx hardhat run scripts/deploy.ts
  *
@@ -88,15 +88,11 @@ console.log(`Execution balance: ${ritual(executionBalance)} (locked until block 
 
 console.log("");
 console.log("── Next steps ────────────────────────────────────────────");
-console.log("1. Expose the demo oracle publicly (the TEE executor cannot reach localhost):");
-console.log("     cd web && pnpm dev");
-console.log("     cloudflared tunnel --url http://localhost:3000");
-console.log("2. Put these in web/.env.local:");
-console.log(`     NEXT_PUBLIC_PREDICT_ADDRESS=${predict.address}`);
-console.log("     NEXT_PUBLIC_DEMO_ORACLE_URL=https://<your-tunnel>/api/oracle/eth");
-console.log("3. Create the demo market from the UI, or:");
+console.log("Create a drift market from a public JSON source:");
 console.log(`     PREDICT_ADDRESS=${predict.address} \\`);
-console.log("     ORACLE_URL=https://<your-tunnel>/api/oracle/eth \\");
+console.log("     DATA_URL=https://example.com/metric.json \\");
+console.log("     REFERENCE_VALUE=1000 TOLERANCE_BPS=500 \\");
 console.log("     npx hardhat run scripts/create-demo-market.ts");
+console.log("No frontend or GitHub Pages site is part of this fork.");
 
 await connection.close();

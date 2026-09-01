@@ -43,22 +43,26 @@ const secondsUntil = (target: bigint) =>
   target <= currentBlock ? "now" : `${(Number(target - currentBlock) * Number(blockTimeMs)) / 1000}s`;
 
 for (const market of await predict.read.getMarkets()) {
-  const pool = market.totalYes + market.totalNo;
-  const yesPct = pool === 0n ? 0 : Number((market.totalYes * 10000n) / pool) / 100;
+  const pool = market.totalDown + market.totalStable + market.totalUp;
+  const pct = (value: bigint) => (pool === 0n ? 0 : Number((value * 10000n) / pool) / 100);
 
   console.log("");
   console.log(`#${market.id} ${market.question}`);
   console.log(`  state        ${MARKET_STATE[market.state]}   outcome ${OUTCOME[market.outcome]}`);
-  console.log(`  rule         observed ${["＞", "≥", "＜", "≤"][market.comparator]} ${market.target}`);
-  console.log(`  oracle       ${market.oracleUrl}  (jq ${market.jsonPath})`);
+  console.log(`  rule         reference ${market.referenceValue}, tolerance +/-${market.toleranceBps} bps`);
+  console.log(`  source       ${market.dataUrl}  (jq ${market.jsonPath})`);
   console.log(
-    `  pool         ${formatEther(pool)} RITUAL — YES ${yesPct.toFixed(1)}% / NO ${(100 - yesPct).toFixed(1)}%`,
+    `  pool         ${formatEther(pool)} RITUAL — down ${pct(market.totalDown).toFixed(1)}% / stable ${pct(
+      market.totalStable,
+    ).toFixed(1)}% / up ${pct(market.totalUp).toFixed(1)}%`,
   );
   console.log(`  closes       block ${market.closeBlock} (${secondsUntil(market.closeBlock)})`);
   console.log(`  resolves     block ${market.resolveBlock} (${secondsUntil(market.resolveBlock)})`);
   console.log(`  attempts     ${market.attempts}/${maxAttempts}`);
 
-  if (market.observedValue !== 0n) console.log(`  observed     ${market.observedValue}`);
+  if (market.observedValue !== 0n) {
+    console.log(`  observed     ${market.observedValue} (${market.driftBps} bps drift)`);
+  }
   if (market.invalidReason !== "") console.log(`  invalid      ${market.invalidReason}`);
 
   if (market.scheduleId !== 0n) {

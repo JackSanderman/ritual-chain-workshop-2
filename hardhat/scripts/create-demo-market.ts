@@ -1,42 +1,35 @@
 /**
- * Create the preset workshop market: betting open ~3 minutes, automatic resolution
+ * Create the preset drift market: betting open ~3 minutes, automatic resolution
  * ~1 minute later.
  *
- *   PREDICT_ADDRESS=0x... ORACLE_URL=https://<tunnel>/api/oracle/eth \
+ *   PREDICT_ADDRESS=0x... DATA_URL=https://example.com/metric.json \
  *     npx hardhat run scripts/create-demo-market.ts
  *
- * Optional: QUESTION, JSON_PATH, TARGET, COMPARATOR (gt|gte|lt|lte),
- *           BETTING_SECONDS, RESOLVE_DELAY_SECONDS
+ * Optional: QUESTION, JSON_PATH, REFERENCE_VALUE, TOLERANCE_BPS, BETTING_SECONDS,
+ *           RESOLVE_DELAY_SECONDS
  */
-import { COMPARATOR, DEMO_MARKET } from "./market-presets.ts";
+import { DEMO_MARKET } from "./market-presets.ts";
 import { connectRitual, explorerTx } from "./ritual.ts";
 
 const address = process.env.PREDICT_ADDRESS;
 if (!address) throw new Error("Set PREDICT_ADDRESS to the deployed RitualPredict address.");
 
-const oracleUrl = process.env.ORACLE_URL ?? DEMO_MARKET.oracleUrl;
-if (!oracleUrl.startsWith("https://") && !oracleUrl.startsWith("http://")) {
-  throw new Error("ORACLE_URL must be an http(s) URL reachable from the public internet.");
+const dataUrl = process.env.DATA_URL ?? DEMO_MARKET.dataUrl;
+if (!dataUrl.startsWith("https://") && !dataUrl.startsWith("http://")) {
+  throw new Error("DATA_URL must be an http(s) URL reachable from the public internet.");
 }
-if (oracleUrl.includes("localhost") || oracleUrl.includes("127.0.0.1")) {
+if (dataUrl.includes("localhost") || dataUrl.includes("127.0.0.1")) {
   throw new Error(
-    "The oracle URL is fetched by a TEE executor in the cloud, so localhost will never " +
-      "resolve. Expose the demo oracle with a tunnel (see README) and pass that URL.",
+    "The data URL is fetched by a TEE executor in the cloud, so localhost will never resolve.",
   );
-}
-
-const comparatorKey = (process.env.COMPARATOR ?? DEMO_MARKET.comparator) as keyof typeof COMPARATOR;
-const comparator = COMPARATOR[comparatorKey];
-if (comparator === undefined) {
-  throw new Error(`COMPARATOR must be one of: ${Object.keys(COMPARATOR).join(", ")}`);
 }
 
 const params = {
   question: process.env.QUESTION ?? DEMO_MARKET.question,
-  oracleUrl,
+  dataUrl,
   jsonPath: process.env.JSON_PATH ?? DEMO_MARKET.jsonPath,
-  target: BigInt(process.env.TARGET ?? DEMO_MARKET.target),
-  comparator,
+  referenceValue: BigInt(process.env.REFERENCE_VALUE ?? DEMO_MARKET.referenceValue),
+  toleranceBps: Number(process.env.TOLERANCE_BPS ?? DEMO_MARKET.toleranceBps),
   bettingSeconds: BigInt(process.env.BETTING_SECONDS ?? DEMO_MARKET.bettingSeconds),
   resolveDelaySeconds: BigInt(process.env.RESOLVE_DELAY_SECONDS ?? DEMO_MARKET.resolveDelaySeconds),
 } as const;
@@ -53,8 +46,8 @@ if (executionBalance === 0n) {
 }
 
 console.log(`Question:   ${params.question}`);
-console.log(`Rule:       observed ${comparatorKey.toUpperCase()} ${params.target}`);
-console.log(`Oracle:     ${params.oracleUrl}  (jq: ${params.jsonPath})`);
+console.log(`Rule:       drift from ${params.referenceValue} with +/-${params.toleranceBps} bps tolerance`);
+console.log(`Source:     ${params.dataUrl}  (jq: ${params.jsonPath})`);
 console.log(`Betting:    ${params.bettingSeconds}s, then resolve after ${params.resolveDelaySeconds}s`);
 console.log("");
 
